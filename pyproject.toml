@@ -1,0 +1,11 @@
+[project]
+name = "llm-policy-system"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.10.6",
+    "google-generativeai>=0.8.5",
+    "langchain-core>=0.3.71",
+]

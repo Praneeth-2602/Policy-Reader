@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+langchain
+langchain-google-genai
+langchain-community
+langchain-astradb 
+python-dotenv
+unstructured[pdf,docx,email]
