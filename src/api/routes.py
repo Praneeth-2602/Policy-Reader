@@ -10,6 +10,7 @@ from src.utils.text_processing import TextProcessor
 from src.utils.vector_store import VectorStoreManager
 from src.agents.query_parser import QueryParser
 from src.agents.models import ParsedQuery, DecisionResponse, Justification
+from src.api.models import UserQuery
 from src.pipeline.retriever import ClauseRetriever
 from src.core.decision_engine import DecisionEngine
 from pydantic import BaseModel
@@ -71,7 +72,7 @@ class ExplainableAnswer(BaseModel):
     justification: Optional[str] = None
 
 class HackRxRunResponse(BaseModel):
-    answers: List[ExplainableAnswer]
+    answers: List[str]
 
 class RetrievedDocumentResponse(BaseModel):
     page_content: str
@@ -79,7 +80,7 @@ class RetrievedDocumentResponse(BaseModel):
 
 @router.get("/")
 async def read_root():
-    return {"message": "Welcome to the LLM Policy Information System! Use /process-claim to get started."}
+    return {"message": "Welcome to the LLM Policy Information System! Use /hackrx/run to get started."}
 
 @router.post("/parse-query", response_model=ParsedQuery, summary="Parse Natural Language Query")
 async def parse_user_query(user_query: UserQuery):
@@ -134,28 +135,29 @@ async def upload_document(file: UploadFile = File(...)):
 import requests
 import tempfile
 
+
+# Updated /hackrx/run endpoint: returns only answer strings and checks allowed domain
+from urllib.parse import urlparse
+
 @router.post("/hackrx/run", response_model=HackRxRunResponse, summary="Batch Q&A on policy document from URL")
 async def hackrx_run(request: Request, payload: HackRxRunRequest, db: Session = Depends(get_db)):
-    # Optional: Bearer token check (can be made stricter as needed)
     auth = request.headers.get("Authorization")
     if not auth or not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    # Optionally, check token value here
 
-
-    # 1. Check if document already processed (by URL)
-
+    # SSRF mitigation: Only allow Azure Blob Storage links
+    allowed_domains = ["hackrx.blob.core.windows.net"]
     doc_url = payload.documents
+    parsed_url = urlparse(doc_url)
+    if parsed_url.netloc not in allowed_domains:
+        raise HTTPException(status_code=400, detail="Document URL must be from an allowed domain.")
+
     processed_doc = db.query(ProcessedDocument).filter_by(url=doc_url).first()
     if processed_doc:
         logger.info(f"Reusing processed document from DB: {processed_doc.local_path}")
         tmp_path = processed_doc.local_path
         extracted_text = processed_doc.extracted_text
-        # Check if chunks are already in vector DB (pseudo, replace with actual check if available)
-        # If you have a method to check vector DB for doc hash, use it here
-        # For now, always re-add chunks (idempotent for most vector DBs)
     else:
-        # Download and save
         try:
             response = requests.get(doc_url)
             response.raise_for_status()
@@ -170,15 +172,12 @@ async def hackrx_run(request: Request, payload: HackRxRunRequest, db: Session = 
             raise HTTPException(status_code=400, detail=f"Failed to download document: {e}")
         extracted_text = None
 
-    # 2. Process the document (load, chunk, embed, index)
     try:
         doc_processor = DocumentProcessor()
         loaded_documents = doc_processor.load_document(tmp_path)
         if not loaded_documents:
             raise HTTPException(status_code=400, detail="Document could not be loaded or parsed.")
-        # Extract and store text for audit/re-chunking
         extracted_text = "\n".join([doc.page_content for doc in loaded_documents])
-        # Save extracted text to DB if not already present
         if not processed_doc:
             new_doc = ProcessedDocument(url=doc_url, file_hash=file_hash, local_path=tmp_path, extracted_text=extracted_text)
             db.add(new_doc)
@@ -197,40 +196,20 @@ async def hackrx_run(request: Request, payload: HackRxRunRequest, db: Session = 
         logger.error(f"Error during document processing: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error during document processing: {e}")
 
-    # 3. For each question, run the pipeline
     answers = []
     for question in payload.questions:
         try:
             parsed_data = await query_parser_instance.parse_query(question)
             retrieved_documents = clause_retriever_instance.retrieve_clauses(parsed_data, k=5)
             final_decision = await decision_engine_instance.evaluate_claim(parsed_data, retrieved_documents)
-            # Extract explainable fields
             if hasattr(final_decision, 'answer'):
                 answer = final_decision.answer
             elif hasattr(final_decision, 'decision'):
                 answer = final_decision.decision
             else:
                 answer = str(final_decision)
-            # Try to extract clause and justification
-            clause_snippet = None
-            clause_tag = None
-            justification = None
-            if hasattr(final_decision, 'justification') and final_decision.justification:
-                # If justification is a list of dicts, take the first
-                just = final_decision.justification[0] if isinstance(final_decision.justification, list) and final_decision.justification else final_decision.justification
-                clause_snippet = just.get('clause_snippet') if isinstance(just, dict) else None
-                clause_tag = just.get('clause_tag') if isinstance(just, dict) else None
-                justification = just.get('reasoning') if isinstance(just, dict) else str(just)
-            tag = getattr(parsed_data, 'tag', None)
-            explainable = ExplainableAnswer(
-                answer=answer,
-                clause_snippet=clause_snippet,
-                clause_tag=clause_tag or tag,
-                justification=justification
-            )
-            answers.append(explainable)
+            answers.append(answer)
         except Exception as e:
             logger.error(f"Error processing question '{question}': {e}")
-            explainable = ExplainableAnswer(answer=f"Error: {e}")
-            answers.append(explainable)
+            answers.append(f"Error: {e}")
     return HackRxRunResponse(answers=answers)

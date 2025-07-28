@@ -23,26 +23,13 @@ class DecisionEngine:
         self.format_instructions = self.output_parser.get_format_instructions()
 
         # Prompt template for the decision engine
+        # Prompt template for the decision engine (concise, direct answer only)
         self.prompt_template = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template(
-                "You are an expert insurance policy evaluator and decision maker. "
-                "Your task is to determine the approval status and payout amount (if applicable) "
-                "for an insurance claim based on a user's query and provided policy clauses. "
-                "You must strictly adhere to the rules and information in the 'CONTEXTUAL POLICY CLAUSES'. "
-                "Provide a decision, an amount (if applicable), and detailed justification "
-                "by mapping each part of your decision to the exact clause(s) it was based on. "
-                "Do NOT use external knowledge. Only use the provided context. "
-                "If information is missing to make a definitive decision, state that clearly."
+                "You are an expert insurance policy evaluator. Given a user's question and relevant policy clauses, answer the question as directly and concisely as possible, using only the provided context. Do NOT use external knowledge. If the answer is not present in the context, reply with 'Information not found in the provided policy clauses.' Do not include explanations, justifications, or extra formatting. Only return the direct answer as a single sentence."
             ),
             HumanMessagePromptTemplate.from_template(
-                "User Query Details (Structured JSON):\n```json\n{parsed_query}\n```\n\n"
-                "CONTEXTUAL POLICY CLAUSES:\n{context}\n\n"
-                "Based on the 'User Query Details' and the 'CONTEXTUAL POLICY CLAUSES', "
-                "determine the decision, amount, and provide justification. "
-                "For justification, extract the exact snippet from the 'CONTEXTUAL POLICY CLAUSES', "
-                "its reference (from metadata 'source' and 'page_number' if available), "
-                "and explain your reasoning. If multiple clauses apply to one part of the decision, list them all.\n\n"
-                "Format instructions:\n{format_instructions}"
+                "User Query: {parsed_query}\n\nCONTEXTUAL POLICY CLAUSES:\n{context}\n\nFormat instructions:\n{format_instructions}"
             ),
         ])
 
