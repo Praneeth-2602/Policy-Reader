@@ -2,7 +2,7 @@
 # main.py
 import uvicorn
 from fastapi import FastAPI
-from api.routes import router
+from src.api.routes import router
 
 app = FastAPI(
     title="LLM Policy Information System",

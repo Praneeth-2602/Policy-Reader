@@ -159,20 +159,31 @@ async def hackrx_run(request: Request, payload: HackRxRunRequest, db: Session = 
         extracted_text = processed_doc.extracted_text
     else:
         try:
+            # Download the PDF from the blob link
             response = requests.get(doc_url)
             response.raise_for_status()
             file_hash = hashlib.sha256(response.content).hexdigest()
             os.makedirs(settings.KNOWLEDGE_BASE_DIR, exist_ok=True)
             local_filename = f"policy_{file_hash[:8]}.pdf"
             tmp_path = os.path.join(settings.KNOWLEDGE_BASE_DIR, local_filename)
+            # Save the PDF locally
             with open(tmp_path, "wb") as f:
                 f.write(response.content)
+            logger.info(f"Saved PDF to {tmp_path}")
+            # Confirm file exists and is readable
+            if not os.path.exists(tmp_path):
+                logger.error(f"File not found after saving: {tmp_path}")
+                raise HTTPException(status_code=500, detail=f"File not found after saving: {tmp_path}")
+            if os.path.getsize(tmp_path) == 0:
+                logger.error(f"File saved but is empty: {tmp_path}")
+                raise HTTPException(status_code=500, detail=f"File saved but is empty: {tmp_path}")
         except Exception as e:
             logger.error(f"Failed to download document: {e}")
             raise HTTPException(status_code=400, detail=f"Failed to download document: {e}")
         extracted_text = None
 
     try:
+        # Process the local PDF with your document loader
         doc_processor = DocumentProcessor()
         loaded_documents = doc_processor.load_document(tmp_path)
         if not loaded_documents:
